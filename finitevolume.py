@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from dataclasses import dataclass
+import itertools
 
 """
 Create Your Own Finite Volume Fluid Simulation (With Python)
@@ -10,6 +12,15 @@ In the compressible Euler equations
 
 """
 
+
+@dataclass
+class GhostPoint:
+	pos: tuple
+	ip_pos: tuple
+
+@dataclass
+class BoundaryPoint:
+	pos: tuple
 
 def getConserved( rho, vx, vy, P, gamma, vol ):
 	"""
@@ -203,7 +214,7 @@ def main():
 	gamma                  = 5/3 # ideal gas gamma
 	courant_fac            = 0.4
 	t                      = 0
-	tEnd                   = 2
+	tEnd                   = 1
 	tOut                   = 0.02 # draw frequency
 	useSlopeLimiting       = False
 	plotRealTime = True # switch on for plotting as the simulation goes along
@@ -221,6 +232,28 @@ def main():
 	vx = -0.5 + (np.abs(Y-0.5)<0.25)
 	vy = w0*np.sin(4*np.pi*X) * ( np.exp(-(Y-0.25)**2/(2 * sigma**2)) + np.exp(-(Y-0.75)**2/(2*sigma**2)) )
 	P = 2.5 * np.ones(X.shape)
+
+	# Generate immersed boundary markers
+	markers = 0 + (np.sqrt((X-0.5)**2 + (Y-0.5)**2) < 0.25)
+
+	# Generate boundary points
+	bp = []
+	num_bps = 100
+	for i in range(num_bps):
+		pos = (64 + 32*np.cos(2*np.pi*i/num_bps), 64 + 32*np.sin(2*np.pi*i/num_bps))
+		bp.append(BoundaryPoint(pos))
+
+	# Generate Ghost Points
+	gp = []
+	offset = list(itertools.product(list(range(-2, 3)), list(range(-2, 3))))
+	print(offset[4])
+	for i in range(N):
+		for j in range(N):
+			if markers[i][j] == 1:
+				for off_x, off_y in offset:
+					if markers[i + off_x][j + off_y] == 0:
+						gp.append(GhostPoint((i, j), None))
+						break
 
 	# Get conserved variables
 	Mass, Momx, Momy, Energy = getConserved( rho, vx, vy, P, gamma, vol )
@@ -285,6 +318,10 @@ def main():
 			plt.cla()
 			plt.imshow(rho.T)
 			plt.clim(0.8, 2.2)
+			bp_x, bp_y = zip(*[p.pos for p in bp])
+			plt.scatter(bp_x, bp_y, s=4)
+			gp_x, gp_y = zip(*[p.pos for p in gp])
+			plt.scatter(gp_x, gp_y, s=4)
 			ax = plt.gca()
 			ax.invert_yaxis()
 			ax.get_xaxis().set_visible(False)
