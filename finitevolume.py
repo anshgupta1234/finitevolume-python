@@ -21,6 +21,7 @@ class GhostPoint:
 @dataclass
 class BoundaryPoint:
 	pos: tuple
+	norm: tuple
 
 def getConserved( rho, vx, vy, P, gamma, vol ):
 	"""
@@ -234,14 +235,26 @@ def main():
 	P = 2.5 * np.ones(X.shape)
 
 	# Generate immersed boundary markers
-	markers = 0 + (np.sqrt((X-0.5)**2 + (Y-0.5)**2) < 0.25)
-
+	R = 10
+	ib_pos = (30, 64)
+	markers = 0 + (np.sqrt((X - ib_pos[0]/N)**2 + (Y - ib_pos[1]/N)**2) < R/N)
+	dist_from_center = np.sqrt((X*N - ib_pos[0])**2 + (Y*N - ib_pos[1])**2)
+	levelset = dist_from_center - R
+	levelsetNormal = levelsetNormal = [[(0, 0) for j in range(N)] for i in range(N)]
+	for i in range(N):
+		for j in range(N):
+			if levelset[i][j] == 0:
+				levelsetNormal[i][j] = (0, 0)
+			else:
+				levelsetNormal[i][j] = (X[i][j]*N - ib_pos[0], Y[i][j]*N - ib_pos[1]) / dist_from_center[i][j]
 	# Generate boundary points
 	bp = []
 	num_bps = 100
 	for i in range(num_bps):
-		pos = (64 + 32*np.cos(2*np.pi*i/num_bps), 64 + 32*np.sin(2*np.pi*i/num_bps))
-		bp.append(BoundaryPoint(pos))
+		theta = 2*np.pi*i/num_bps
+		pos = (ib_pos[0] + R*np.cos(theta) - 0.5, ib_pos[1] + R*np.sin(theta) - 0.5)
+		norm = (np.cos(theta), np.sin(theta))
+		bp.append(BoundaryPoint(pos, norm))
 
 	# Generate Ghost Points
 	gp = []
@@ -252,7 +265,8 @@ def main():
 			if markers[i][j] == 1:
 				for off_x, off_y in offset:
 					if markers[i + off_x][j + off_y] == 0:
-						gp.append(GhostPoint((i, j), None))
+						dist = abs(levelset[i][j])
+						gp.append(GhostPoint((i, j), (i, j) + 2 * dist * levelsetNormal[i][j]))
 						break
 
 	# Get conserved variables
@@ -309,6 +323,8 @@ def main():
 		Momx   = applyFluxes(Momx, flux_Momx_X, flux_Momx_Y, dx, dt)
 		Momy   = applyFluxes(Momy, flux_Momy_X, flux_Momy_Y, dx, dt)
 		Energy = applyFluxes(Energy, flux_Energy_X, flux_Energy_Y, dx, dt)
+
+		# Do Ghost-Point Method
 		
 		# update time
 		t += dt
@@ -319,9 +335,11 @@ def main():
 			plt.imshow(rho.T)
 			plt.clim(0.8, 2.2)
 			bp_x, bp_y = zip(*[p.pos for p in bp])
-			plt.scatter(bp_x, bp_y, s=4)
+			plt.scatter(bp_x, bp_y, s=4, color="black")
 			gp_x, gp_y = zip(*[p.pos for p in gp])
-			plt.scatter(gp_x, gp_y, s=4)
+			plt.scatter(gp_x, gp_y, s=4, color="white")
+			ip_x, ip_y = zip(*[p.ip_pos for p in gp])
+			plt.scatter(ip_x, ip_y, s=4, color="red")
 			ax = plt.gca()
 			ax.invert_yaxis()
 			ax.get_xaxis().set_visible(False)
