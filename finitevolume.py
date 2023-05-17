@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from dataclasses import dataclass
 import itertools
+import imageio
 
 """
 Create Your Own Finite Volume Fluid Simulation (With Python)
@@ -12,11 +13,14 @@ In the compressible Euler equations
 
 """
 
+frames = []
+
 
 @dataclass
 class GhostPoint:
 	pos: tuple
 	ip_pos: tuple
+	interp_coeffs: list
 
 @dataclass
 class BoundaryPoint:
@@ -203,14 +207,63 @@ def getFlux(rho_L, rho_R, vx_L, vx_R, vy_L, vy_R, P_L, P_R, gamma):
 
 	return flux_Mass, flux_Momx, flux_Momy, flux_Energy
 
+def interpolate_image_point(pos, markers):
+	dist = np.zeros(shape=(2,2), dtype=float)
+	alpha = np.zeros(shape=(2,2), dtype=int)
+	interp_coeff = np.zeros(shape=(2,2), dtype=float)
 
+	# Initialize Indices
+	i1, j1 = np.floor(pos).astype(int)
+	i2 = i1 + 1
+	j2 = j1 + 1
 
+	# Calculate distances to each of the corners
+	dist[0][0] = np.sqrt(sum((pos - (i1, j1))**2))
+	dist[1][0] = np.sqrt(sum((pos - (i2, j1))**2))
+	dist[0][1] = np.sqrt(sum((pos - (i1, j2))**2))
+	dist[1][1] = np.sqrt(sum((pos - (i2, j2))**2))
+
+	for i, j in itertools.product([0, 1], [0, 1]):
+		if dist[i][j] <= 0.05:
+			interp_coeff[i][j] = 1
+			break
+	else:
+		eta = 1. / dist**2
+		# alpha 0 if point inside ibm, 1 if not
+		alpha[0][0] = 0 if markers[i1][j1] == 1 else 1
+		alpha[1][0] = 0 if markers[i2][j1] == 1 else 1
+		alpha[0][1] = 0 if markers[i1][j2] == 1 else 1
+		alpha[1][1] = 0 if markers[i2][j2] == 1 else 1
+		buf_mat = alpha * eta
+		buf = np.sum(buf_mat)
+		if buf > 0:
+			interp_coeff = buf_mat / buf
+		else:
+			buf = np.sum(eta)
+			interp_coeff = eta / buf
+
+	return interp_coeff
+
+def calculate_image_point_values(gp, rho, P):
+	interp = gp.interp_coeffs
+	x, y = np.floor(gp.ip_pos).astype(int)
+	rho_IP = interp[0][0] * rho[x][y] + \
+		interp[1][0] * rho[x + 1][y] + \
+		interp[0][1] * rho[x][y + 1] + \
+		interp[1][1] * rho[x + 1][y + 1]
+
+	P_IP = interp[0][0] * P[x][y] + \
+		interp[1][0] * P[x + 1][y] + \
+		interp[0][1] * P[x][y + 1] + \
+		interp[1][1] * P[x + 1][y + 1]
+	
+	return rho_IP, P_IP
 
 def main():
 	""" Finite Volume simulation """
 	
 	# Simulation parameters
-	N                      = 128 # resolution
+	N                      = 256 # resolution
 	boxsize                = 1.
 	gamma                  = 5/3 # ideal gas gamma
 	courant_fac            = 0.4
@@ -218,6 +271,7 @@ def main():
 	tEnd                   = 1
 	tOut                   = 0.02 # draw frequency
 	useSlopeLimiting       = False
+	u_inlet				   = 0.5
 	plotRealTime = True # switch on for plotting as the simulation goes along
 	
 	# Mesh
@@ -226,18 +280,18 @@ def main():
 	xlin = np.linspace(0.5*dx, boxsize-0.5*dx, N)
 	Y, X = np.meshgrid( xlin, xlin )
 	
-	# Generate Initial Conditions - opposite moving streams with perturbation
-	w0 = 0.1
-	sigma = 0.05/np.sqrt(2.)
-	rho = 1. + (np.abs(Y-0.5) < 0.25)
-	vx = -0.5 + (np.abs(Y-0.5)<0.25)
-	vy = w0*np.sin(4*np.pi*X) * ( np.exp(-(Y-0.25)**2/(2 * sigma**2)) + np.exp(-(Y-0.75)**2/(2*sigma**2)) )
+	# Generate Initial Conditions
+	rho = np.ones(X.shape)
+	vx = np.ones(X.shape)
+	# vx[0:75][:] = 1
+	vy = np.zeros(X.shape)
 	P = 2.5 * np.ones(X.shape)
 
 	# Generate immersed boundary markers
 	R = 10
-	ib_pos = (30, 64)
+	ib_pos = (100, 128)
 	markers = 0 + (np.sqrt((X - ib_pos[0]/N)**2 + (Y - ib_pos[1]/N)**2) < R/N)
+	vx -= markers
 	dist_from_center = np.sqrt((X*N - ib_pos[0])**2 + (Y*N - ib_pos[1])**2)
 	levelset = dist_from_center - R
 	levelsetNormal = levelsetNormal = [[(0, 0) for j in range(N)] for i in range(N)]
@@ -247,6 +301,7 @@ def main():
 				levelsetNormal[i][j] = (0, 0)
 			else:
 				levelsetNormal[i][j] = (X[i][j]*N - ib_pos[0], Y[i][j]*N - ib_pos[1]) / dist_from_center[i][j]
+
 	# Generate boundary points
 	bp = []
 	num_bps = 100
@@ -259,14 +314,16 @@ def main():
 	# Generate Ghost Points
 	gp = []
 	offset = list(itertools.product(list(range(-2, 3)), list(range(-2, 3))))
-	print(offset[4])
 	for i in range(N):
 		for j in range(N):
 			if markers[i][j] == 1:
 				for off_x, off_y in offset:
 					if markers[i + off_x][j + off_y] == 0:
 						dist = abs(levelset[i][j])
-						gp.append(GhostPoint((i, j), (i, j) + 2 * dist * levelsetNormal[i][j]))
+						pos = (i, j)
+						ip = pos + 2 * dist * levelsetNormal[i][j]
+						interp_coeffs = interpolate_image_point(ip, markers)
+						gp.append(GhostPoint(pos, ip, interp_coeffs))
 						break
 
 	# Get conserved variables
@@ -281,6 +338,15 @@ def main():
 		
 		# get Primitive variables
 		rho, vx, vy, P = getPrimitive( Mass, Momx, Momy, Energy, gamma, vol )
+
+		# Ghost Point Correction
+		for p in gp:
+			rho_IP, P_IP = calculate_image_point_values(p, rho, P)
+			x, y = p.pos
+			rho[x][y] = rho_IP
+			P[x][y] = P_IP
+			vx[x][y] = 0
+			vy[x][y] = 0
 		
 		# get time step (CFL) = dx / max signal speed
 		dt = courant_fac * np.min( dx / (np.sqrt( gamma*P/rho ) + np.sqrt(vx**2+vy**2)) )
@@ -317,35 +383,35 @@ def main():
 		# compute fluxes (local Lax-Friedrichs/Rusanov)
 		flux_Mass_X, flux_Momx_X, flux_Momy_X, flux_Energy_X = getFlux(rho_XL, rho_XR, vx_XL, vx_XR, vy_XL, vy_XR, P_XL, P_XR, gamma)
 		flux_Mass_Y, flux_Momy_Y, flux_Momx_Y, flux_Energy_Y = getFlux(rho_YL, rho_YR, vy_YL, vy_YR, vx_YL, vx_YR, P_YL, P_YR, gamma)
-		
 		# update solution
 		Mass   = applyFluxes(Mass, flux_Mass_X, flux_Mass_Y, dx, dt)
 		Momx   = applyFluxes(Momx, flux_Momx_X, flux_Momx_Y, dx, dt)
 		Momy   = applyFluxes(Momy, flux_Momy_X, flux_Momy_Y, dx, dt)
 		Energy = applyFluxes(Energy, flux_Energy_X, flux_Energy_Y, dx, dt)
-
-		# Do Ghost-Point Method
 		
 		# update time
 		t += dt
 		
 		# plot in real time
 		if (plotRealTime and plotThisTurn) or (t >= tEnd):
+			vmag = np.sqrt(vx**2 + vy**2)
 			plt.cla()
-			plt.imshow(rho.T)
-			plt.clim(0.8, 2.2)
-			bp_x, bp_y = zip(*[p.pos for p in bp])
-			plt.scatter(bp_x, bp_y, s=4, color="black")
-			gp_x, gp_y = zip(*[p.pos for p in gp])
-			plt.scatter(gp_x, gp_y, s=4, color="white")
-			ip_x, ip_y = zip(*[p.ip_pos for p in gp])
-			plt.scatter(ip_x, ip_y, s=4, color="red")
+			plt.imshow(vmag.T)
+			plt.clim(0.0, 1.4)
+			# bp_x, bp_y = zip(*[p.pos for p in bp])
+			# plt.scatter(bp_x, bp_y, s=4, color="black")
+			# gp_x, gp_y = zip(*[p.pos for p in gp])
+			# plt.scatter(gp_x, gp_y, s=4, color="white")
+			# ip_x, ip_y = zip(*[p.ip_pos for p in gp])
+			# plt.scatter(ip_x, ip_y, s=4, color="red")
 			ax = plt.gca()
 			ax.invert_yaxis()
 			ax.get_xaxis().set_visible(False)
 			ax.get_yaxis().set_visible(False)	
-			ax.set_aspect('equal')	
-			plt.pause(0.001)
+			ax.set_aspect('equal')
+			plt.savefig(f'./img/img_{t}.png', dpi=240)
+			plt.pause(0.01)
+			frames.append(imageio.v2.imread(f'./img/img_{t}.png'))
 			outputCount += 1
 			
 	
@@ -359,4 +425,7 @@ def main():
 
 if __name__== "__main__":
   main()
+  imageio.mimsave('./sim.gif', # output gif
+                frames,          # array of input frames
+                duration = 300)         # optional: frames per second
 
