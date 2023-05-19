@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../jCode"
+		},
+		{
+			"path": "../MFC"
+		}
+	],
+	"settings": {
+		"fortran.fortls.disabled": true
+	}
+}

@@ -286,7 +286,7 @@ def main():
 	useSlopeLimiting       = False
 	u_inlet				   = 0.5
 	plotRealTime = True # switch on for plotting as the simulation goes along
-	ibm_slip = False
+	ibm_slip = True
 	
 	# Mesh
 	dx = boxsize / Nx
@@ -369,7 +369,7 @@ def main():
 				norm = norm / np.sqrt(sum(norm**2)) # Normal vector from GP to IP
 				Un_IP = sum(U_IP * norm) * norm # Velocity in norm direction
 				vel = U_IP - Un_IP
-				vx[x][y], vy[x][y] = -Un_IP
+				vx[x][y], vy[x][y] = U_IP - Un_IP
 			else:
 				# No Slip BC
 				vx[x][y], vy[x][y] = (0, 0)
@@ -441,7 +441,8 @@ def main():
 			ax.add_patch(cir)
 			plt.savefig(f'./img/img_{t}.png', dpi=240)
 			plt.pause(0.5)
-			img = cv2.imread(f'./img/img_{t}.png')
+			# img = cv2.imread(f'./img/img_{t}.png')
+			img = imageio.v3.imread(f'./img/img_{t}.png')
 			frames.append(img)
 			outputCount += 1
 			
@@ -459,11 +460,11 @@ if __name__== "__main__":
 	main()
 	height, width, layers = frames[0].shape
 	size = (width, height)
-	out = cv2.VideoWriter('noslip.mp4',cv2.VideoWriter_fourcc(*'mp4v'), 1.25, size)
-	for i in range(len(frames)):
-		out.write(frames[i])
-	out.release()
-	# imageio.mimsave('./sim.gif', # output gif
-	#     frames,          # array of input frames
-	#     duration = 1000)         # optional: frames per second
+	# out = cv2.VideoWriter('noslip.mp4',cv2.VideoWriter_fourcc(*'mp4v'), 1.25, size)
+	# for i in range(len(frames)):
+	# 	out.write(frames[i])
+	# out.release()
+	imageio.mimsave('./sim.gif', # output gif
+	    frames,          # array of input frames
+	    duration = 1000)         # optional: frames per second
 
