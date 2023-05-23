@@ -271,22 +271,50 @@ def calculate_image_point_values(gp, rho, P, vx, vy):
 	
 	return rho_IP, P_IP, Ux_IP, Uy_IP
 
+def update_boundary_cell_values(rho, vx, vy, P):
+	# Update left cells
+	vx[0][:] = 1 # v = (1, 0)
+	vy[0][:] = 0
+	P[0] = P[1]	 # dP/dx = 0
+	rho[0] = rho[1] # drho/dx = 0
+
+	# Update right cells
+	vx[-1] = vx[-2] #dv/dx = 0
+	vy[-1] = vy[-2]
+	P[-1] = P[-2]	 # dP/dx = 0
+	rho[-1] = rho[-2] # drho/dx = 0
+
+	# Update top cells
+	# vx[1:-1][-1] = vx[1:-1][-2] #dv/dx = 0
+	# vy[1:-1][-1] =vy[1:-1][-2]
+	# P[1:-1][-1] = P[1:-1][-2]	 # dP/dx = 0
+	# rho[1:-1][-1] = rho[1:-1][-2] # drho/dx = 0
+
+	# # Update bottom cells
+	# vx[1:-1][0] = vx[1:-1][1] #dv/dx = 0
+	# vy[1:-1][0] = vy[1:-1][1]
+	# P[1:-1][0] = P[1:-1][1]	 # dP/dx = 0
+	# rho[1:-1][0] = rho[1:-1][1] # drho/dx = 0
+
+	return rho, vx, vy, P
+
+
 def main():
 	""" Finite Volume simulation """
 	
 	# Simulation parameters
-	Nx                     = 250 # resolution
-	Ny                     = 250 # resolution
+	Nx                     = 300 # resolution
+	Ny                     = 300 # resolution
 	boxsize                = 1.
 	gamma                  = 5/3 # ideal gas gamma
 	courant_fac            = 0.4
 	t                      = 0
-	tEnd                   = 0.4
-	tOut                   = 0.02 # draw frequency
+	tEnd                   = 15
+	tOut                   = 0.04 # draw frequency
 	useSlopeLimiting       = False
 	u_inlet				   = 0.5
 	plotRealTime = True # switch on for plotting as the simulation goes along
-	ibm_slip = True
+	ibm_slip = False
 	
 	# Mesh
 	dx = boxsize / Nx
@@ -298,13 +326,13 @@ def main():
 
 	# Generate Initial Conditions
 	rho = np.ones(X.shape)
-	vx = 0. + 0.5*(np.abs(X - 0.5) < 0.2)
+	vx = np.zeros(X.shape)
 	vy = 0
-	P = 2.5 * np.ones(X.shape)
+	P = np.ones(X.shape)
 
 	# Generate immersed boundary markers
-	R = 15
-	ib_pos = (200, 125)
+	R = 10
+	ib_pos = (Nx/2 - 60, Ny/2)
 	markers = 0 + (np.sqrt((X*Nx - ib_pos[0])**2 + (Y*Ny - ib_pos[1])**2) < R)
 	dist_from_center = np.sqrt((X*Nx - ib_pos[0])**2 + (Y*Ny - ib_pos[1])**2)
 	levelset = dist_from_center - R
@@ -355,7 +383,11 @@ def main():
 		# get Primitive variables
 		rho, vx, vy, P = getPrimitive( Mass, Momx, Momy, Energy, gamma, vol )
 
+		# Overriding for neumann (figure out)
+		rho, vx, vy, P = update_boundary_cell_values(rho, vx, vy, P)
+
 		# Ghost Point Correction
+		# Remove this for testing inlet / outlet
 		for p in gp:
 			rho_IP, P_IP, Ux_IP, Uy_IP = calculate_image_point_values(p, rho, P, vx, vy)
 			U_IP = np.array((Ux_IP, Uy_IP))
@@ -386,6 +418,34 @@ def main():
 		vx_dx,  vx_dy  = getGradient(vx,  dx, dy)
 		vy_dx,  vy_dy  = getGradient(vy,  dx, dy)
 		P_dx,   P_dy   = getGradient(P,   dx, dy)
+
+		# modify derivatives at boundaries
+		# for neumann just set derivates to const (etc. P and rho)
+		# for dirichlet, use finite difference scheme
+		# ex: just do (u_(i+1) - u_i) / dx for left, (u_i - u_(i-1)) / dx
+		# Update left cells
+		vx_dx[0] = (vx[1] - vx[0]) / dx
+		vy_dx[0] = (vy[1] - vy[0]) / dx
+		P_dx[0] = 0	 # dP/dx = 0
+		rho_dx[0] = 0 # drho/dx = 0
+
+		# Update right cells
+		vx_dx[-1] = 0
+		vy_dx[-1] = 0
+		P_dx[-1] = 0
+		rho_dx[-1] = 0 # drho/dx = 0
+
+		# # Update top cells
+		# vx_dx[1:-1][-1] = 0
+		# vy_dx[1:-1][-1] = 0
+		# P_dx[1:-1][-1] = 0
+		# rho_dx[1:-1][-1] = 0 # drho/dx = 0
+
+		# # Update bottom cells
+		# vx_dx[1:-1][0] = 0
+		# vy_dx[1:-1][0] = 0
+		# P_dx[1:-1][0] = 0
+		# rho_dx[1:-1][0] = 0 # drho/dx = 0
 		
 		# slope limit gradients
 		if useSlopeLimiting:
@@ -405,7 +465,7 @@ def main():
 		vx_XL,  vx_XR,  vx_YL,  vx_YR  = extrapolateInSpaceToFace(vx_prime,  vx_dx,  vx_dy,  dx, dy)
 		vy_XL,  vy_XR,  vy_YL,  vy_YR  = extrapolateInSpaceToFace(vy_prime,  vy_dx,  vy_dy,  dx, dy)
 		P_XL,   P_XR,   P_YL,   P_YR   = extrapolateInSpaceToFace(P_prime,   P_dx,   P_dy,   dx, dy)
-		
+
 		# compute fluxes (local Lax-Friedrichs/Rusanov)
 		flux_Mass_X, flux_Momx_X, flux_Momy_X, flux_Energy_X = getFlux(rho_XL, rho_XR, vx_XL, vx_XR, vy_XL, vy_XR, P_XL, P_XR, gamma)
 		flux_Mass_Y, flux_Momy_Y, flux_Momx_Y, flux_Energy_Y = getFlux(rho_YL, rho_YR, vy_YL, vy_YR, vx_YL, vx_YR, P_YL, P_YR, gamma)
@@ -421,13 +481,20 @@ def main():
 		
 		# plot in real time
 		if (plotRealTime and plotThisTurn) or (t >= tEnd):
+
+			# convert cons to prim
+			# apply BC to prim
+			# convert back to cons
+
 			vmag = np.sqrt(vx**2 + vy**2)
-			vmag = vmag[160:240, 85:165]
-			vmag_normalized = (vmag - np.min(vmag)) / (np.max(vmag) - np.min(vmag))
+			# vmag = vmag[160:240, 85:165]
+			# vmag_normalized = (vmag - np.min(vmag)) / (np.max(vmag) - np.min(vmag))
 			plt.cla()
 			cmap = plt.cm.get_cmap('coolwarm')
-			plt.quiver(X[160:240,85:165], Y[160:240,85:165], vx[160:240,85:165], vy[160:240,85:165], vmag_normalized, cmap=cmap, scale=20)
-			cir = plt.Circle((200/Nx, 125/Ny), R/Nx, fill=False)
+			plt.imshow(vmag.T)
+			plt.clim(0.0, 2)
+			# plt.quiver(X, Y, vx, vy, vmag, cmap=cmap, scale=20)
+			cir = plt.Circle(ib_pos, R, fill=False)
 			# plt.scatter(bp_x, bp_y, s=4, color="black")
 			gp_x, gp_y = zip(*[p.pos for p in gp])
 			#plt.scatter(gp_x, gp_y, s=4, color="white")
@@ -441,8 +508,8 @@ def main():
 			ax.add_patch(cir)
 			plt.savefig(f'./img/img_{t}.png', dpi=240)
 			plt.pause(0.5)
-			# img = cv2.imread(f'./img/img_{t}.png')
-			img = imageio.v3.imread(f'./img/img_{t}.png')
+			img = cv2.imread(f'./img/img_{t}.png')
+			# img = imageio.v3.imread(f'./img/img_{t}.png')
 			frames.append(img)
 			outputCount += 1
 			
@@ -460,11 +527,11 @@ if __name__== "__main__":
 	main()
 	height, width, layers = frames[0].shape
 	size = (width, height)
-	# out = cv2.VideoWriter('noslip.mp4',cv2.VideoWriter_fourcc(*'mp4v'), 1.25, size)
-	# for i in range(len(frames)):
-	# 	out.write(frames[i])
-	# out.release()
-	imageio.mimsave('./sim.gif', # output gif
-	    frames,          # array of input frames
-	    duration = 1000)         # optional: frames per second
+	out = cv2.VideoWriter('noslip.mp4',cv2.VideoWriter_fourcc(*'mp4v'), 5, size)
+	for i in range(len(frames)):
+		out.write(frames[i])
+	out.release()
+	# imageio.mimsave('./sim.gif', # output gif
+	#     frames,          # array of input frames
+	#     duration = 1000)         # optional: frames per second
 
